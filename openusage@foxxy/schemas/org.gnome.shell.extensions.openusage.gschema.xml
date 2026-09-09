@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="org.gnome.shell.extensions.openusage" path="/org/gnome/shell/extensions/openusage/">
+    <key name="refresh-interval" type="u">
+      <default>300</default>
+      <summary>Refresh interval (seconds)</summary>
+      <description>How often to poll the provider usage endpoints.</description>
+    </key>
+    <key name="show-label" type="b">
+      <default>true</default>
+      <summary>Show percentage label in panel</summary>
+    </key>
+    <key name="warn-threshold" type="i">
+      <default>80</default>
+      <summary>Warning threshold (%)</summary>
+      <description>Panel icon turns orange/red at/above this usage.</description>
+    </key>
+    <key name="show-codex" type="b">
+      <default>true</default>
+      <summary>Track OpenAI Codex (ChatGPT)</summary>
+    </key>
+    <key name="show-zai" type="b">
+      <default>true</default>
+      <summary>Track Z.AI GLM Coding Plan</summary>
+    </key>
+    <key name="show-opencode" type="b">
+      <default>true</default>
+      <summary>Track OpenCode (Zen / Go)</summary>
+    </key>
+    <key name="chatgpt-base-url" type="s">
+      <default>""</default>
+      <summary>ChatGPT backend base URL override</summary>
+    </key>
+    <key name="zai-api-key" type="s">
+      <default>""</default>
+      <summary>Z.AI API key</summary>
+    </key>
+    <key name="zai-region" type="s">
+      <default>"global"</default>
+      <summary>Z.AI region: global or china</summary>
+    </key>
+    <key name="opencode-cookie" type="s">
+      <default>""</default>
+      <summary>OpenCode console session cookie value</summary>
+    </key>
+    <key name="opencode-cookie-name" type="s">
+      <default>"auth"</default>
+      <summary>OpenCode console session cookie name</summary>
+    </key>
+  </schema>
+</schemalist>

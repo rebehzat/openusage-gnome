@@ -1,0 +1,8 @@
+{
+  "uuid": "openusage@foxxy",
+  "name": "OpenUsage",
+  "description": "AI plan usage meters in your top bar: OpenAI Codex (ChatGPT), Z.AI GLM Coding Plan, and OpenCode (Zen/Go). Provider logic ported from janekbaraniewski/openusage.",
+  "shell-version": ["49", "50"],
+  "url": "https://github.com/rebehzat/openusage-gnome",
+  "settings-schema": "org.gnome.shell.extensions.openusage"
+}

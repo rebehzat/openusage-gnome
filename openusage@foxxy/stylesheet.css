@@ -1,0 +1,28 @@
+/* openusage@foxxy — theme-integrated styles */
+.ou-header {
+    font-weight: bold;
+}
+.ou-sub {
+    font-size: 0.85em;
+    opacity: 0.65;
+}
+.ou-pct {
+    font-weight: bold;
+    font-variant-numeric: tabular-nums;
+}
+.ou-reset {
+    font-size: 0.8em;
+    opacity: 0.6;
+    margin-left: 12px;
+}
+.ou-right {
+    spacing: 0px;
+}
+.ou-track {
+    background-color: rgba(127, 127, 127, 0.22);
+    border-radius: 99px;
+}
+.ou-fill {
+    border-radius: 99px;
+    margin: 1px;
+}

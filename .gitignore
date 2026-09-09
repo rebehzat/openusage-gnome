@@ -1,0 +1,5 @@
+*.compiled
+gschemas.compiled
+__pycache__/
+*.swp
+.DS_Store
