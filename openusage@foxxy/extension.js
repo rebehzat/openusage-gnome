@@ -271,22 +271,10 @@ class OpenUsageIndicator extends PanelMenu.Button {
         }
         const oc = this._state.opencode;
         if (oc?.status === 'ok') {
-            const usage = oc.go?.usage ?? [];
-            const weekly = usage.find((x) => x.key === 'weekly');
-            if (weekly) {
-                const weeklyLeft = clamp(100 - weekly.pct);
-                // blend the monthly budget in at half weight ONLY when it is
-                // meaningfully tighter than weekly (≥20pt gap) — a near-tie
-                // (e.g. 91 vs 96) should not drag the average down
-                const monthly = usage.find((x) => x.key === 'monthly');
-                if (monthly) {
-                    const monthlyLeft = clamp(100 - monthly.pct);
-                    const gap = weeklyLeft - monthlyLeft;
-                    lefts.push(gap >= 20 ? monthlyLeft / 2 : weeklyLeft);
-                } else {
-                    lefts.push(weeklyLeft);
-                }
-            }
+            // OpenCode Go: plain monthly remaining (user preference)
+            const monthly = (oc.go?.usage ?? []).find((x) => x.key === 'monthly');
+            if (monthly)
+                lefts.push(clamp(100 - monthly.pct));
         }
         return lefts;
     }
