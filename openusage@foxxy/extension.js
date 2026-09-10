@@ -275,13 +275,14 @@ class OpenUsageIndicator extends PanelMenu.Button {
             const weekly = usage.find((x) => x.key === 'weekly');
             if (weekly) {
                 const weeklyLeft = clamp(100 - weekly.pct);
-                // if the monthly budget is tighter than the weekly one, blend it
-                // in at half weight so the panel doesn't paint an overly rosy
-                // picture when monthly is nearly exhausted (user preference)
+                // blend the monthly budget in at half weight ONLY when it is
+                // meaningfully tighter than weekly (≥20pt gap) — a near-tie
+                // (e.g. 91 vs 96) should not drag the average down
                 const monthly = usage.find((x) => x.key === 'monthly');
                 if (monthly) {
                     const monthlyLeft = clamp(100 - monthly.pct);
-                    lefts.push(monthlyLeft < weeklyLeft ? monthlyLeft / 2 : weeklyLeft);
+                    const gap = weeklyLeft - monthlyLeft;
+                    lefts.push(gap >= 20 ? monthlyLeft / 2 : weeklyLeft);
                 } else {
                     lefts.push(weeklyLeft);
                 }
