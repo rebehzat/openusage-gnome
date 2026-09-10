@@ -253,8 +253,41 @@ class OpenUsageIndicator extends PanelMenu.Button {
         return seen ? clamp(100 - worstUsed) : null;
     }
 
+    // weekly-remaining per provider: each subscription's weekly budget window
+    _weeklyLefts() {
+        const lefts = [];
+        const codex = this._state.codex;
+        if (codex?.status === 'ok') {
+            const ws = codex.windows ?? [];
+            const w = ws.find((x) => x.key === 'secondary') ?? ws.find((x) => (x.label ?? '').includes('d'));
+            if (w)
+                lefts.push(clamp(100 - w.usedPct));
+        }
+        const zai = this._state.zai;
+        if (zai?.status === 'ok') {
+            const w = (zai.creditWindows ?? []).find((x) => (x.label ?? '').endsWith('w'));
+            if (w && w.pct != null)
+                lefts.push(clamp(100 - w.pct));
+        }
+        const oc = this._state.opencode;
+        if (oc?.status === 'ok') {
+            const w = (oc.go?.usage ?? []).find((x) => x.key === 'weekly');
+            if (w)
+                lefts.push(clamp(100 - w.pct));
+        }
+        return lefts;
+    }
+
+    // panel number: average weekly remaining across subs (fallback: worst meter)
+    _panelLeft() {
+        const lefts = this._weeklyLefts();
+        if (lefts.length)
+            return lefts.reduce((a, b) => a + b, 0) / lefts.length;
+        return this._minLeft();
+    }
+
     _updatePanelWidgets() {
-        const minLeft = this._minLeft();
+        const minLeft = this._panelLeft();
         const showLabel = this._settings.get_boolean('show-label');
         this._label.visible = showLabel;
         if (minLeft == null) {
