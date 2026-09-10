@@ -271,9 +271,21 @@ class OpenUsageIndicator extends PanelMenu.Button {
         }
         const oc = this._state.opencode;
         if (oc?.status === 'ok') {
-            const w = (oc.go?.usage ?? []).find((x) => x.key === 'weekly');
-            if (w)
-                lefts.push(clamp(100 - w.pct));
+            const usage = oc.go?.usage ?? [];
+            const weekly = usage.find((x) => x.key === 'weekly');
+            if (weekly) {
+                const weeklyLeft = clamp(100 - weekly.pct);
+                // if the monthly budget is tighter than the weekly one, blend it
+                // in at half weight so the panel doesn't paint an overly rosy
+                // picture when monthly is nearly exhausted (user preference)
+                const monthly = usage.find((x) => x.key === 'monthly');
+                if (monthly) {
+                    const monthlyLeft = clamp(100 - monthly.pct);
+                    lefts.push(monthlyLeft < weeklyLeft ? monthlyLeft / 2 : weeklyLeft);
+                } else {
+                    lefts.push(weeklyLeft);
+                }
+            }
         }
         return lefts;
     }
