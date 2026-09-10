@@ -27,10 +27,6 @@
       <default>true</default>
       <summary>Track OpenCode (Zen / Go)</summary>
     </key>
-    <key name="show-antigravity" type="b">
-      <default>true</default>
-      <summary>Track Antigravity CLI (agy)</summary>
-    </key>
     <key name="chatgpt-base-url" type="s">
       <default>""</default>
       <summary>ChatGPT backend base URL override</summary>

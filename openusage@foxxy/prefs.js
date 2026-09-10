@@ -34,7 +34,6 @@ export default class OpenUsagePreferences extends ExtensionPreferences {
             ['show-codex', 'OpenAI Codex (ChatGPT)', 'Reads ~/.codex/auth.json — no key needed'],
             ['show-zai', 'Z.AI GLM Coding Plan', 'Requires a Z.AI API key'],
             ['show-opencode', 'OpenCode (Zen / Go)', 'Reads ~/.local/share/opencode/auth.json'],
-            ['show-antigravity', 'Antigravity CLI (agy)', 'Reads the agy statusline JSON (hook auto-installed)'],
         ]) {
             const row = new Adw.SwitchRow({title, subtitle});
             settings.bind(key, row, 'active', Gio.SettingsBindFlags.DEFAULT);

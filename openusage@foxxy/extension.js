@@ -137,7 +137,7 @@ class OpenUsageIndicator extends PanelMenu.Button {
         this._ext = extension;
         this._settings = extension.getSettings();
         this._session = Providers.mkSession(15);
-        this._state = {codex: null, zai: null, opencode: null, antigravity: null};
+        this._state = {codex: null, zai: null, opencode: null};
         this._updatedAt = 0;
         this._refreshing = false;
         this._timeoutId = 0;
@@ -221,17 +221,15 @@ class OpenUsageIndicator extends PanelMenu.Button {
                 cookie: s.get_string('opencode-cookie'),
                 cookieName: s.get_string('opencode-cookie-name'),
             }).then((r) => ['opencode', r]).catch((e) => ['opencode', {status: 'error', provider: 'opencode', message: e.message}]));
-        if (s.get_boolean('show-antigravity'))
-            jobs.push(Providers.fetchAntigravity().then((r) => ['antigravity', r]).catch((e) => ['antigravity', {status: 'error', provider: 'antigravity', message: e.message}]));
 
         const results = await Promise.allSettled(jobs);
-        const next = {codex: null, zai: null, opencode: null, antigravity: null};
+        const next = {codex: null, zai: null, opencode: null};
         for (const r of results) {
             if (r.status === 'fulfilled')
                 next[r.value[0]] = r.value[1];
         }
         // keep previous state for providers disabled in settings
-        for (const k of ['codex', 'zai', 'opencode', 'antigravity']) {
+        for (const k of ['codex', 'zai', 'opencode']) {
             if (!s.get_boolean(`show-${k}`))
                 next[k] = next[k] ?? this._state[k];
         }
@@ -246,7 +244,7 @@ class OpenUsageIndicator extends PanelMenu.Button {
     _minLeft() {
         let worstUsed = 0;
         let seen = false;
-        for (const k of ['codex', 'zai', 'opencode', 'antigravity']) {
+        for (const k of ['codex', 'zai', 'opencode']) {
             const st = this._state[k];
             if (st && st.maxPct != null) {
                 worstUsed = Math.max(worstUsed, st.maxPct);
@@ -279,9 +277,6 @@ class OpenUsageIndicator extends PanelMenu.Button {
             if (monthly)
                 lefts.push(clamp(100 - monthly.pct));
         }
-        const agy = this._state.antigravity;
-        if (agy?.status === 'ok' && agy.minLeft != null)
-            lefts.push(clamp(agy.minLeft)); // tightest agy quota window
         return lefts;
     }
 
@@ -329,8 +324,6 @@ class OpenUsageIndicator extends PanelMenu.Button {
             add(this._buildZai(this._state.zai));
         if (s.get_boolean('show-opencode'))
             add(this._buildOpenCode(this._state.opencode));
-        if (s.get_boolean('show-antigravity'))
-            add(this._buildAntigravity(this._state.antigravity));
 
         this._updatedLabel.text = this._updatedAt
             ? `Updated ${new Date(this._updatedAt * 1000).toLocaleTimeString()}`
@@ -466,26 +459,6 @@ class OpenUsageIndicator extends PanelMenu.Button {
             section.addMenuItem(makeInfoRow(`Console: ${st.cookieError}`));
         if (st.status === 'auth')
             section.addMenuItem(makeInfoRow('All API keys rejected — re-login `opencode auth login`'));
-        return section;
-    }
-
-    _buildAntigravity(st) {
-        const section = new PopupMenu.PopupMenuSection();
-        const right = st && st.status === 'ok' && st.planTier ? st.planTier : this._statusRight(st);
-        section.addMenuItem(makeSectionHeader('Antigravity CLI', right));
-        if (!st) {
-            section.addMenuItem(makeInfoRow('Disabled'));
-            return section;
-        }
-        if (st.status !== 'ok') {
-            section.addMenuItem(makeInfoRow(st.message ?? 'Unavailable'));
-            return section;
-        }
-        for (const w of st.windows)
-            section.addMenuItem(makeRow(`${w.label} quota`, 100 - w.leftPct,
-                w.resetAt ? fmtDuration(w.resetAt - Date.now() / 1000) : null));
-        if (st.model)
-            section.addMenuItem(makeInfoRow(`Model: ${st.model}`));
         return section;
     }
 

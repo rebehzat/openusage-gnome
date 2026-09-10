@@ -1,5 +1,4 @@
 // test-runner: gjs -m test/run.js
-import GLib from 'gi://GLib';
 import * as P from '../openusage@foxxy/providers.js';
 
 const s = P.mkSession(15);
@@ -60,26 +59,6 @@ check('seroval date', parsed.timeMonthlyUsageUpdated === '2026-04-30T12:00:00.00
 check('seroval bools', parsed.reloadAmount === false && parsed.reloadTrigger === true);
 check('seroval backref', parsed.customerID === null);
 check('seroval string with colon/comma', parsed.note === 'a,b:c');
-
-// ---- Antigravity (fixture statusline file) ----------------------------------
-print('[Antigravity]');
-const agyFixture = {
-    model: {id: 'gemini-3-pro', display_name: 'Gemini 3 Pro'},
-    quota: {
-        prompt_24h: {remaining_fraction: 0.63, reset_in_seconds: 3600},
-        weekly: 0.9,
-    },
-    plan_tier: 'pro',
-    received_at: new Date().toISOString(),
-};
-GLib.setenv('OPENUSAGE_ANTIGRAVITY_STATUS_FILE', '/tmp/agy-test-status.json', true);
-GLib.file_set_contents('/tmp/agy-test-status.json', JSON.stringify(agyFixture));
-const agy = await P.fetchAntigravity();
-check('antigravity ok', agy.status === 'ok', `(plan: ${agy.planTier})`);
-check('antigravity windows', agy.windows.length === 2);
-check('antigravity minLeft', Math.abs(agy.minLeft - 63) < 0.01, `(minLeft: ${agy.minLeft})`);
-check('antigravity maxPct', Math.abs(agy.maxPct - 37) < 0.01);
-check('antigravity fresh', !agy.stale);
 
 print('');
 print(failures === 0 ? 'ALL PASSED' : `${failures} FAILURES`);
