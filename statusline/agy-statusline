@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# openusage-gnome — Antigravity CLI (agy) statusline hook.
+# Receives agy's status JSON on stdin, persists it for the GNOME panel meter.
+# Prints nothing: agy keeps its default statusline (stack_with_default).
+# Contract mirrors janekbaraniewski/openusage's `openusage antigravity statusline`.
+set -euo pipefail
+f="${OPENUSAGE_ANTIGRAVITY_STATUS_FILE:-${XDG_STATE_HOME:-$HOME/.local/state}/openusage/antigravity-status.json}"
+mkdir -p "$(dirname "$f")"
+tee "$f" > /dev/null
