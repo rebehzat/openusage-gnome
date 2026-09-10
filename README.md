@@ -13,6 +13,10 @@ Tracks:
   authenticated `GET /zen/go/v1/usage` endpoint (no browser cookie needed).
   Zen catalog auth status shown too. Optional console-cookie billing
   (balance / monthly limit) is still supported.
+- **Antigravity CLI (agy)** — quota windows from agy's statusline JSON. The
+  installer drops a tiny hook into `~/.local/bin/` and registers it in
+  `~/.gemini/antigravity-cli/settings.json` (`statusLine.command`); run `agy`
+  once and the meter starts updating.
 
 Provider logic is ported from
 [janekbaraniewski/openusage](https://github.com/janekbaraniewski/openusage) (Go)
@@ -74,6 +78,7 @@ for options:
 | OpenCode Go | `GET https://opencode.ai/zen/go/v1/usage` | Bearer API key |
 | OpenCode Zen | `GET https://opencode.ai/zen/v1/models` | Bearer API key |
 | OpenCode console (optional) | `GET https://opencode.ai/_server` (`queryBillingInfo` server-fn) | session cookie |
+| Antigravity | local statusline file `$XDG_STATE_HOME/openusage/antigravity-status.json` | none (local hook) |
 
 ## Development
 
