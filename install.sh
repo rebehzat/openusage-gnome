@@ -35,4 +35,4 @@ gsettings set org.gnome.shell enabled-extensions "$new_list"
 
 echo
 echo "✅ Installed. Log out and back in (Wayland), then look for the meter in the top bar."
-echo "   Settings: right-click the panel item → OpenUsage Settings…"
+echo "   Settings: open the panel menu → OpenUsage Settings…"

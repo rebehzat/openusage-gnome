@@ -1,5 +1,5 @@
 // extension.js — OpenUsage: AI plan usage meters in the GNOME top bar
-// Providers: OpenAI Codex (ChatGPT), Z.AI GLM Coding Plan, OpenCode (Zen/Go)
+// Providers: OpenAI Codex (ChatGPT), OpenCode Go
 // Bars show % LEFT; healthy fill uses the system accent color (GNOME 47+).
 
 import GLib from 'gi://GLib';
@@ -43,18 +43,6 @@ function fmtDuration(sec) {
 
 function fmtUsd(v) {
     return v == null ? '—' : `$${v.toFixed(2)}`;
-}
-
-function fmtTokens(v) {
-    if (v == null)
-        return '';
-    if (v >= 1e9)
-        return `${(v / 1e9).toFixed(1)}B`;
-    if (v >= 1e6)
-        return `${(v / 1e6).toFixed(1)}M`;
-    if (v >= 1e3)
-        return `${(v / 1e3).toFixed(1)}k`;
-    return `${Math.round(v)}`;
 }
 
 function makeBar(usedPct, widthPx = 120) {
@@ -137,7 +125,7 @@ class OpenUsageIndicator extends PanelMenu.Button {
         this._ext = extension;
         this._settings = extension.getSettings();
         this._session = Providers.mkSession(15);
-        this._state = {codex: null, zai: null, opencode: null};
+        this._state = {codex: null, opencode: null};
         this._updatedAt = 0;
         this._refreshing = false;
         this._timeoutId = 0;
@@ -211,29 +199,15 @@ class OpenUsageIndicator extends PanelMenu.Button {
         const jobs = [];
         if (s.get_boolean('show-codex'))
             jobs.push(Providers.fetchCodex(this._session, {baseUrl: s.get_string('chatgpt-base-url')}).then((r) => ['codex', r]).catch((e) => ['codex', {status: 'error', provider: 'codex', message: e.message}]));
-        if (s.get_boolean('show-zai'))
-            jobs.push(Providers.fetchZai(this._session, {
-                apiKey: s.get_string('zai-api-key'),
-                region: s.get_string('zai-region'),
-            }).then((r) => ['zai', r]).catch((e) => ['zai', {status: 'error', provider: 'zai', message: e.message}]));
         if (s.get_boolean('show-opencode'))
-            jobs.push(Providers.fetchOpenCode(this._session, {
-                cookie: s.get_string('opencode-cookie'),
-                cookieName: s.get_string('opencode-cookie-name'),
-            }).then((r) => ['opencode', r]).catch((e) => ['opencode', {status: 'error', provider: 'opencode', message: e.message}]));
+            jobs.push(Providers.fetchOpenCode(this._session).then((r) => ['opencode', r]).catch((e) => ['opencode', {status: 'error', provider: 'opencode', message: e.message}]));
 
         const results = await Promise.allSettled(jobs);
-        const next = {codex: null, zai: null, opencode: null};
+        const next = {codex: null, opencode: null};
         for (const r of results) {
             if (r.status === 'fulfilled')
                 next[r.value[0]] = r.value[1];
         }
-        // keep previous state for providers disabled in settings
-        for (const k of ['codex', 'zai', 'opencode']) {
-            if (!s.get_boolean(`show-${k}`))
-                next[k] = next[k] ?? this._state[k];
-        }
-
         this._state = next;
         this._updatedAt = Date.now() / 1000;
         this._rebuild();
@@ -244,9 +218,9 @@ class OpenUsageIndicator extends PanelMenu.Button {
     _minLeft() {
         let worstUsed = 0;
         let seen = false;
-        for (const k of ['codex', 'zai', 'opencode']) {
+        for (const k of ['codex', 'opencode']) {
             const st = this._state[k];
-            if (st && st.maxPct != null) {
+            if (this._settings.get_boolean(`show-${k}`) && st?.status === 'ok' && st.maxPct != null) {
                 worstUsed = Math.max(worstUsed, st.maxPct);
                 seen = true;
             }
@@ -258,22 +232,16 @@ class OpenUsageIndicator extends PanelMenu.Button {
     _weeklyLefts() {
         const lefts = [];
         const codex = this._state.codex;
-        if (codex?.status === 'ok') {
+        if (this._settings.get_boolean('show-codex') && codex?.status === 'ok') {
             const ws = codex.windows ?? [];
             const w = ws.find((x) => x.key === 'secondary') ?? ws.find((x) => (x.label ?? '').includes('d'));
             if (w)
                 lefts.push(clamp(100 - w.usedPct));
         }
-        const zai = this._state.zai;
-        if (zai?.status === 'ok') {
-            const w = (zai.creditWindows ?? []).find((x) => (x.label ?? '').endsWith('w'));
-            if (w && w.pct != null)
-                lefts.push(clamp(100 - w.pct));
-        }
         const oc = this._state.opencode;
-        if (oc?.status === 'ok') {
-            // OpenCode Go: plain monthly remaining (user preference)
-            const monthly = (oc.go?.usage ?? []).find((x) => x.key === 'monthly');
+        if (this._settings.get_boolean('show-opencode') && oc?.status === 'ok') {
+            // OpenCode Go: monthly remaining
+            const monthly = (oc.usage ?? []).find((x) => x.key === 'monthly');
             if (monthly)
                 lefts.push(clamp(100 - monthly.pct));
         }
@@ -320,8 +288,6 @@ class OpenUsageIndicator extends PanelMenu.Button {
 
         if (s.get_boolean('show-codex'))
             add(this._buildCodex(this._state.codex));
-        if (s.get_boolean('show-zai'))
-            add(this._buildZai(this._state.zai));
         if (s.get_boolean('show-opencode'))
             add(this._buildOpenCode(this._state.opencode));
 
@@ -351,7 +317,7 @@ class OpenUsageIndicator extends PanelMenu.Button {
     _buildCodex(st) {
         const section = new PopupMenu.PopupMenuSection();
         const right = st && st.status === 'ok' ? (st.plan ?? '') : this._statusRight(st);
-        section.addMenuItem(makeSectionHeader('OpenAI Codex (ChatGPT)', right));
+        section.addMenuItem(makeSectionHeader('OpenAI Codex (pi)', right));
         if (!st) {
             section.addMenuItem(makeInfoRow('Disabled'));
             return section;
@@ -373,92 +339,18 @@ class OpenUsageIndicator extends PanelMenu.Button {
         return section;
     }
 
-    _buildZai(st) {
-        const section = new PopupMenu.PopupMenuSection();
-        const right = st && st.status === 'ok' && st.planLevel
-            ? `GLM ${st.planLevel}`
-            : this._statusRight(st);
-        section.addMenuItem(makeSectionHeader('Z.AI GLM Coding Plan', right));
-        if (!st) {
-            section.addMenuItem(makeInfoRow('Disabled'));
-            return section;
-        }
-        if (st.status !== 'ok') {
-            section.addMenuItem(makeInfoRow(st.message ?? 'Unavailable'));
-            return section;
-        }
-        for (const w of st.creditWindows ?? []) {
-            section.addMenuItem(makeRow(`${w.label} credits`, w.pct ?? 0,
-                w.resetAt ? fmtDuration(w.resetAt - Date.now() / 1000) : null));
-            if (w.used != null && w.limit != null)
-                section.addMenuItem(makeInfoRow(`${fmtTokens(w.used)} / ${fmtTokens(w.limit)} credits used`));
-        }
-        if (!st.creditWindows?.length && st.fiveHour) {
-            const pct = st.fiveHour.pct ?? (st.fiveHour.tokens ? clamp((st.fiveHour.tokens.used / st.fiveHour.tokens.limit) * 100) : 0);
-            section.addMenuItem(makeRow('5h tokens', pct,
-                st.fiveHour.resetAt ? fmtDuration(st.fiveHour.resetAt - Date.now() / 1000) : null));
-        }
-        if (st.credits && (st.credits.available != null || st.credits.limit != null)) {
-            const c = st.credits;
-            section.addMenuItem(makeInfoRow(`Credits: ${fmtUsd(c.available)} available · ${fmtUsd(c.used)} used`));
-        }
-        return section;
-    }
-
     _buildOpenCode(st) {
         const section = new PopupMenu.PopupMenuSection();
-        let right = this._statusRight(st);
-        if (st?.billing?.subscriptionPlan)
-            right = st.billing.subscriptionPlan;
-        section.addMenuItem(makeSectionHeader('OpenCode (Zen / Go)', right));
-        if (!st) {
-            section.addMenuItem(makeInfoRow('Disabled'));
+        section.addMenuItem(makeSectionHeader('OpenCode Go (pi)', this._statusRight(st)));
+        if (!st || st.status !== 'ok') {
+            section.addMenuItem(makeInfoRow(st?.message ?? 'Unavailable'));
             return section;
         }
-        if (st.status === 'noauth') {
-            section.addMenuItem(makeInfoRow(st.message ?? 'Not signed in'));
-            return section;
-        }
-
-        // usage windows from the Go plan (bars) — no model counts
-        const usage = st.go?.usage ?? [];
-        if (usage.length)
-            section.addMenuItem(makeSectionHeader('OpenCode Go', ''));
-        for (const w of usage)
-            section.addMenuItem(makeRow(w.label, w.pct ?? 0,
+        for (const w of st.usage ?? [])
+            section.addMenuItem(makeRow(w.label, w.pct,
                 w.resetAt ? fmtDuration(w.resetAt - Date.now() / 1000) : null));
-
-        // cookie-authed console billing (optional, still supported)
-        const b = st.billing;
-        if (b && (b.monthlyLimit || b.balance != null)) {
-            if (b.monthlyLimit)
-                section.addMenuItem(makeRow('Console monthly', clamp((b.monthlyUsage / b.monthlyLimit) * 100)));
-            section.addMenuItem(makeInfoRow(
-                `Balance ${fmtUsd(b.balance)} · used ${fmtUsd(b.monthlyUsage)}${b.monthlyLimit ? ` / ${fmtUsd(b.monthlyLimit)}` : ''}`));
-        }
-
-        // auth status lines (no model counts)
-        const lines = [];
-        for (const [key, title] of [['zen', 'Zen'], ['go', 'Go']]) {
-            const p = st[key];
-            if (!p)
-                continue;
-            if (p.auth === true)
-                lines.push(`${title}: connected`);
-            else if (p.auth === false)
-                lines.push(`${title}: API key rejected (HTTP ${p.httpStatus})`);
-            else if (p.limited)
-                lines.push(`${title}: rate limited (429)`);
-            else
-                lines.push(`${title}: unreachable${p.error ? ` (${p.error})` : ''}`);
-        }
-        if (!usage.length || lines.some((l) => !l.endsWith('connected')))
-            for (const l of lines)
-                section.addMenuItem(makeInfoRow(l));
-        if (st.cookieError)
-            section.addMenuItem(makeInfoRow(`Console: ${st.cookieError}`));
-        if (st.status === 'auth')
-            section.addMenuItem(makeInfoRow('All API keys rejected — re-login `opencode auth login`'));
+        if (!st.usage?.length)
+            section.addMenuItem(makeInfoRow('No usage windows returned'));
         return section;
     }
 
