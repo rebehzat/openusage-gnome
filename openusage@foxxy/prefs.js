@@ -1,4 +1,4 @@
-// OpenUsage preferences — only pi OpenAI Codex and OpenCode Go.
+// OpenUsage preferences — ChatGPT, Grok Build, and Grok Bot.
 import Adw from 'gi://Adw';
 import Gio from 'gi://Gio';
 import {ExtensionPreferences} from 'resource:///org/gnome/shell/extensions/extension.js';
@@ -8,7 +8,7 @@ export default class OpenUsagePreferences extends ExtensionPreferences {
         const settings = this.getSettings();
         const page = new Adw.PreferencesPage({title: 'General', icon_name: 'preferences-system-symbolic'});
         const general = new Adw.PreferencesGroup({title: 'Polling',
-            description: 'Usage is read from accounts in ~/.pi/agent/auth.json'});
+            description: 'ChatGPT uses the Codex CLI sign-in. Grok Build uses the grok CLI sign-in. Grok Bot uses the Grok Bot app sign-in.'});
         const interval = Adw.SpinRow.new_with_range(60, 3600, 30);
         interval.title = 'Refresh interval (seconds)';
         settings.bind('refresh-interval', interval, 'value', Gio.SettingsBindFlags.DEFAULT);
@@ -22,16 +22,6 @@ export default class OpenUsagePreferences extends ExtensionPreferences {
         general.add(showLabel);
         page.add(general);
 
-        const providers = new Adw.PreferencesGroup({title: 'Pi accounts'});
-        for (const [key, title, subtitle] of [
-            ['show-codex', 'OpenAI Codex', 'Pi account: openai-codex'],
-            ['show-opencode', 'OpenCode Go', 'Pi account: opencode-go'],
-        ]) {
-            const row = new Adw.SwitchRow({title, subtitle});
-            settings.bind(key, row, 'active', Gio.SettingsBindFlags.DEFAULT);
-            providers.add(row);
-        }
-        page.add(providers);
         window.add(page);
     }
 }

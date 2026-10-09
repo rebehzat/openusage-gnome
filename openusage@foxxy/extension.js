@@ -1,5 +1,5 @@
 // extension.js — OpenUsage: AI plan usage meters in the GNOME top bar
-// Providers: OpenAI Codex (ChatGPT), OpenCode Go
+// ChatGPT (Codex CLI), Grok Build (grok CLI), and Grok Bot.
 // Bars show % LEFT; healthy fill uses the system accent color (GNOME 47+).
 
 import GLib from 'gi://GLib';
@@ -41,10 +41,6 @@ function fmtDuration(sec) {
     return `${Math.max(m, 1)}m`;
 }
 
-function fmtUsd(v) {
-    return v == null ? '—' : `$${v.toFixed(2)}`;
-}
-
 function makeBar(usedPct, widthPx = 120) {
     const left = clamp(100 - usedPct);
     const color = colorForLeft(left) ?? '-st-accent-color';
@@ -77,7 +73,7 @@ function makeRow(labelText, usedPct, resetText) {
         y_align: Clutter.ActorAlign.CENTER,
     });
     right.add_child(new St.Label({
-        text: `${left}% left`,
+        text: `${Math.round(left)}% left`,
         style_class: 'ou-pct',
     }));
     if (resetText) {
@@ -125,7 +121,7 @@ class OpenUsageIndicator extends PanelMenu.Button {
         this._ext = extension;
         this._settings = extension.getSettings();
         this._session = Providers.mkSession(15);
-        this._state = {codex: null, opencode: null};
+        this._state = {codex: null, grok: null, grokBot: null};
         this._updatedAt = 0;
         this._refreshing = false;
         this._timeoutId = 0;
@@ -158,7 +154,7 @@ class OpenUsageIndicator extends PanelMenu.Button {
             can_focus: true,
             child: new St.Icon({icon_name: 'view-refresh-symbolic'}),
         });
-        refreshBtn.connect('clicked', () => this._refresh(true));
+        refreshBtn.connect('clicked', () => this._refresh());
         fbox.add_child(refreshBtn);
         footer.add_child(fbox);
         this.menu.addMenuItem(footer);
@@ -191,105 +187,58 @@ class OpenUsageIndicator extends PanelMenu.Button {
         });
     }
 
-    async _refresh(force = false) {
+    async _refresh() {
         if (this._refreshing)
             return;
         this._refreshing = true;
-        const s = this._settings;
-        const jobs = [];
-        if (s.get_boolean('show-codex'))
-            jobs.push(Providers.fetchCodex(this._session, {baseUrl: s.get_string('chatgpt-base-url')}).then((r) => ['codex', r]).catch((e) => ['codex', {status: 'error', provider: 'codex', message: e.message}]));
-        if (s.get_boolean('show-opencode'))
-            jobs.push(Providers.fetchOpenCode(this._session).then((r) => ['opencode', r]).catch((e) => ['opencode', {status: 'error', provider: 'opencode', message: e.message}]));
-
-        const results = await Promise.allSettled(jobs);
-        const next = {codex: null, opencode: null};
-        for (const r of results) {
-            if (r.status === 'fulfilled')
-                next[r.value[0]] = r.value[1];
-        }
-        this._state = next;
+        const baseUrl = this._settings.get_string('chatgpt-base-url');
+        const [codex, grok, grokBot] = await Promise.all([
+            Providers.fetchCodex(this._session, {baseUrl}).catch(e => ({status: 'error', message: e.message})),
+            Providers.fetchGrokBuild(this._session).catch(e => ({status: 'error', provider: 'grok-build', message: e.message})),
+            Providers.fetchGrokBot(this._session).catch(e => ({status: 'error', provider: 'grok-bot', message: e.message})),
+        ]);
+        this._state = {codex, grok, grokBot};
         this._updatedAt = Date.now() / 1000;
         this._rebuild();
         this._refreshing = false;
     }
 
-    // worst-consumed meter across providers → its remaining %
-    _minLeft() {
-        let worstUsed = 0;
-        let seen = false;
-        for (const k of ['codex', 'opencode']) {
-            const st = this._state[k];
-            if (this._settings.get_boolean(`show-${k}`) && st?.status === 'ok' && st.maxPct != null) {
-                worstUsed = Math.max(worstUsed, st.maxPct);
-                seen = true;
-            }
-        }
-        return seen ? clamp(100 - worstUsed) : null;
-    }
-
-    // weekly-remaining per provider: each subscription's weekly budget window
-    _weeklyLefts() {
-        const lefts = [];
-        const codex = this._state.codex;
-        if (this._settings.get_boolean('show-codex') && codex?.status === 'ok') {
-            const ws = codex.windows ?? [];
-            const w = ws.find((x) => x.key === 'secondary') ?? ws.find((x) => (x.label ?? '').includes('d'));
-            if (w)
-                lefts.push(clamp(100 - w.usedPct));
-        }
-        const oc = this._state.opencode;
-        if (this._settings.get_boolean('show-opencode') && oc?.status === 'ok') {
-            // OpenCode Go: monthly remaining
-            const monthly = (oc.usage ?? []).find((x) => x.key === 'monthly');
-            if (monthly)
-                lefts.push(clamp(100 - monthly.pct));
-        }
-        return lefts;
-    }
-
-    // panel number: average weekly remaining across subs (fallback: worst meter)
+    // Average remaining weekly allowance across the providers that reported one.
     _panelLeft() {
-        const lefts = this._weeklyLefts();
-        if (lefts.length)
-            return lefts.reduce((a, b) => a + b, 0) / lefts.length;
-        return this._minLeft();
+        const lefts = [];
+        for (const st of [this._state.codex, this._state.grok, this._state.grokBot]) {
+            const weekly = st?.status === 'ok' ? st.windows?.[0] : null;
+            if (weekly)
+                lefts.push(clamp(100 - weekly.usedPct));
+        }
+        if (!lefts.length)
+            return null;
+        return lefts.reduce((sum, value) => sum + value, 0) / lefts.length;
     }
 
     _updatePanelWidgets() {
-        const minLeft = this._panelLeft();
+        const weeklyLeft = this._panelLeft();
         const showLabel = this._settings.get_boolean('show-label');
         this._label.visible = showLabel;
-        if (minLeft == null) {
-            this._label.text = showLabel ? 'OpenUsage' : '';
+        if (weeklyLeft == null) {
+            this._label.text = showLabel ? '—' : '';
             this._icon.style = '';
             this._label.style = '';
             return;
         }
-        this._label.text = `${Math.round(minLeft)}% left`;
+        this._label.text = `${Math.round(weeklyLeft)}% left`;
         const warn = this._settings.get_int('warn-threshold');
-        const tight = 100 - minLeft >= warn;
-        const color = tight ? colorForLeft(minLeft) : null;
+        const tight = 100 - weeklyLeft >= warn;
+        const color = tight ? colorForLeft(weeklyLeft) : null;
         this._icon.style = color ? `color: ${color};` : '';
         this._label.style = color ? `color: ${color}; font-weight: bold;` : '';
     }
 
     _rebuild() {
         this._content.removeAll();
-        const s = this._settings;
-
-        let first = true;
-        const add = (section) => {
-            if (!first)
-                this._content.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
-            first = false;
-            this._content.addMenuItem(section);
-        };
-
-        if (s.get_boolean('show-codex'))
-            add(this._buildCodex(this._state.codex));
-        if (s.get_boolean('show-opencode'))
-            add(this._buildOpenCode(this._state.opencode));
+        this._content.addMenuItem(this._buildUsage('ChatGPT Weekly', this._state.codex));
+        this._content.addMenuItem(this._buildUsage('Grok Build', this._state.grok));
+        this._content.addMenuItem(this._buildUsage('Grok Bot', this._state.grokBot));
 
         this._updatedLabel.text = this._updatedAt
             ? `Updated ${new Date(this._updatedAt * 1000).toLocaleTimeString()}`
@@ -314,10 +263,10 @@ class OpenUsageIndicator extends PanelMenu.Button {
         }
     }
 
-    _buildCodex(st) {
+    _buildUsage(title, st) {
         const section = new PopupMenu.PopupMenuSection();
         const right = st && st.status === 'ok' ? (st.plan ?? '') : this._statusRight(st);
-        section.addMenuItem(makeSectionHeader('OpenAI Codex (pi)', right));
+        section.addMenuItem(makeSectionHeader(title, right));
         if (!st) {
             section.addMenuItem(makeInfoRow('Disabled'));
             return section;
@@ -327,30 +276,10 @@ class OpenUsageIndicator extends PanelMenu.Button {
             return section;
         }
         for (const w of st.windows)
-            section.addMenuItem(makeRow(`${w.label} window`, w.usedPct, w.resetAt ? fmtDuration(w.resetAt - Date.now() / 1000) : null));
-        for (const ex of st.extras ?? [])
-            for (const w of ex.windows)
-                section.addMenuItem(makeRow(`${ex.name} · ${w.label}`, w.usedPct, w.resetAt ? fmtDuration(w.resetAt - Date.now() / 1000) : null));
-        if (st.credits && (st.credits.unlimited || st.credits.hasCredits)) {
-            const c = st.credits;
-            section.addMenuItem(makeInfoRow(
-                c.unlimited ? 'Credits: unlimited' : `Credits: ${fmtUsd(c.balance)} available`));
-        }
-        return section;
-    }
-
-    _buildOpenCode(st) {
-        const section = new PopupMenu.PopupMenuSection();
-        section.addMenuItem(makeSectionHeader('OpenCode Go (pi)', this._statusRight(st)));
-        if (!st || st.status !== 'ok') {
-            section.addMenuItem(makeInfoRow(st?.message ?? 'Unavailable'));
-            return section;
-        }
-        for (const w of st.usage ?? [])
-            section.addMenuItem(makeRow(w.label, w.pct,
+            section.addMenuItem(makeRow(w.label || 'Weekly', w.usedPct,
                 w.resetAt ? fmtDuration(w.resetAt - Date.now() / 1000) : null));
-        if (!st.usage?.length)
-            section.addMenuItem(makeInfoRow('No usage windows returned'));
+        if (!st.windows.length)
+            section.addMenuItem(makeInfoRow(st.message || 'Weekly usage unavailable'));
         return section;
     }
 

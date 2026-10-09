@@ -1,8 +1,11 @@
 {
   "uuid": "openusage@foxxy",
   "name": "OpenUsage",
-  "description": "OpenAI Codex and OpenCode Go usage meters from pi agent accounts.",
-  "shell-version": ["49", "50"],
+  "description": "ChatGPT, Grok Build, and Grok Bot usage in the top bar.",
+  "shell-version": [
+    "49",
+    "50"
+  ],
   "url": "https://github.com/rebehzat/openusage-gnome",
   "settings-schema": "org.gnome.shell.extensions.openusage"
 }
