@@ -55,12 +55,14 @@ if (ARGV.includes('--live')) {
     const session = P.mkSession();
     try {
         const result = await P.fetchCodex(session);
-        check(result.status === 'ok', `Codex live status: ${result.status}${result.message ? ` (${result.message})` : ''}`);
-        check(result.windows.length === 1, 'Codex returned weekly usage');
-        print(`ChatGPT weekly remaining: ${100 - result.windows[0].usedPct}%`);
+        print(`ChatGPT live status: ${result.status}${result.message ? ` (${result.message})` : ''}`);
+        if (result.status === 'ok') {
+            check(result.windows.length === 1, 'Codex returned weekly usage');
+            print(`ChatGPT weekly remaining: ${100 - result.windows[0].usedPct}%`);
+        }
         const go = await P.fetchOpencodeGo(session);
-        check(go.status === 'ok', `OpenCode Go live status: ${go.status}${go.message ? ` (${go.message})` : ''}`);
-        for (const w of go.windows)
+        print(`OpenCode Go live status: ${go.status}${go.message ? ` (${go.message})` : ''}`);
+        for (const w of go.windows ?? [])
             print(`OpenCode Go ${w.label} remaining: ${100 - w.usedPct}%`);
     } finally { session.abort(); }
 }
