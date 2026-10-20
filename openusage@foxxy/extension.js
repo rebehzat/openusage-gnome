@@ -1,5 +1,5 @@
 // extension.js — OpenUsage: AI plan usage meters in the GNOME top bar
-// ChatGPT (Codex CLI), Grok Build (grok CLI), and Grok Bot.
+// ChatGPT (Codex CLI) and OpenCode Go.
 // Bars show % LEFT; healthy fill uses the system accent color (GNOME 47+).
 
 import GLib from 'gi://GLib';
@@ -121,7 +121,7 @@ class OpenUsageIndicator extends PanelMenu.Button {
         this._ext = extension;
         this._settings = extension.getSettings();
         this._session = Providers.mkSession(15);
-        this._state = {codex: null, grok: null, grokBot: null};
+        this._state = {codex: null, opencodeGo: null};
         this._updatedAt = 0;
         this._refreshing = false;
         this._timeoutId = 0;
@@ -192,22 +192,27 @@ class OpenUsageIndicator extends PanelMenu.Button {
             return;
         this._refreshing = true;
         const baseUrl = this._settings.get_string('chatgpt-base-url');
-        const [codex, grok, grokBot] = await Promise.all([
-            Providers.fetchCodex(this._session, {baseUrl}).catch(e => ({status: 'error', message: e.message})),
-            Providers.fetchGrokBuild(this._session).catch(e => ({status: 'error', provider: 'grok-build', message: e.message})),
-            Providers.fetchGrokBot(this._session).catch(e => ({status: 'error', provider: 'grok-bot', message: e.message})),
+        const [codex, opencodeGo] = await Promise.all([
+            Providers.fetchCodex(this._session, {baseUrl}).catch(e => ({status: 'error', provider: 'codex', message: e.message})),
+            Providers.fetchOpencodeGo(this._session).catch(e => ({status: 'error', provider: 'opencode-go', message: e.message})),
         ]);
-        this._state = {codex, grok, grokBot};
+        this._state = {codex, opencodeGo};
         this._updatedAt = Date.now() / 1000;
         this._rebuild();
         this._refreshing = false;
     }
 
+    // The weekly window of a provider, which is the one the panel averages.
+    _weekly(st) {
+        const windows = st?.status === 'ok' ? (st.windows ?? []) : [];
+        return windows.find(w => w.key === 'weekly') ?? windows[0] ?? null;
+    }
+
     // Average remaining weekly allowance across the providers that reported one.
     _panelLeft() {
         const lefts = [];
-        for (const st of [this._state.codex, this._state.grok, this._state.grokBot]) {
-            const weekly = st?.status === 'ok' ? st.windows?.[0] : null;
+        for (const st of [this._state.codex, this._state.opencodeGo]) {
+            const weekly = this._weekly(st);
             if (weekly)
                 lefts.push(clamp(100 - weekly.usedPct));
         }
@@ -237,8 +242,7 @@ class OpenUsageIndicator extends PanelMenu.Button {
     _rebuild() {
         this._content.removeAll();
         this._content.addMenuItem(this._buildUsage('ChatGPT Weekly', this._state.codex));
-        this._content.addMenuItem(this._buildUsage('Grok Build', this._state.grok));
-        this._content.addMenuItem(this._buildUsage('Grok Bot', this._state.grokBot));
+        this._content.addMenuItem(this._buildUsage('OpenCode Go', this._state.opencodeGo));
 
         this._updatedLabel.text = this._updatedAt
             ? `Updated ${new Date(this._updatedAt * 1000).toLocaleTimeString()}`

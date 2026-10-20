@@ -1,7 +1,7 @@
 {
   "uuid": "openusage@foxxy",
   "name": "OpenUsage",
-  "description": "ChatGPT, Grok Build, and Grok Bot usage in the top bar.",
+  "description": "ChatGPT and OpenCode Go usage in the top bar.",
   "shell-version": [
     "49",
     "50"

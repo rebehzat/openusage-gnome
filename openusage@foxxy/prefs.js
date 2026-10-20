@@ -1,4 +1,4 @@
-// OpenUsage preferences — ChatGPT, Grok Build, and Grok Bot.
+// OpenUsage preferences — ChatGPT and OpenCode Go.
 import Adw from 'gi://Adw';
 import Gio from 'gi://Gio';
 import {ExtensionPreferences} from 'resource:///org/gnome/shell/extensions/extension.js';
@@ -8,7 +8,7 @@ export default class OpenUsagePreferences extends ExtensionPreferences {
         const settings = this.getSettings();
         const page = new Adw.PreferencesPage({title: 'General', icon_name: 'preferences-system-symbolic'});
         const general = new Adw.PreferencesGroup({title: 'Polling',
-            description: 'ChatGPT uses the Codex CLI sign-in. Grok Build uses the grok CLI sign-in. Grok Bot uses the Grok Bot app sign-in.'});
+            description: 'ChatGPT uses the Codex CLI sign-in. OpenCode Go uses the OpenCode CLI sign-in (/connect → OpenCode Go).'});
         const interval = Adw.SpinRow.new_with_range(60, 3600, 30);
         interval.title = 'Refresh interval (seconds)';
         settings.bind('refresh-interval', interval, 'value', Gio.SettingsBindFlags.DEFAULT);

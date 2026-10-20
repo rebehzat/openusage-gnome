@@ -1,9 +1,8 @@
-// ChatGPT weekly usage from the Codex CLI sign-in, Grok Build from the
-// grok CLI sign-in, and Grok Bot from the desktop app's saved session.
+// ChatGPT weekly usage from the Codex CLI sign-in, and OpenCode Go usage from
+// the API key the OpenCode CLI stores for the Go subscription.
 import GLib from 'gi://GLib';
 import Gio from 'gi://Gio';
 import Soup from 'gi://Soup?version=3.0';
-import Secret from 'gi://Secret';
 
 const decoder = new TextDecoder();
 const pct = v => Math.max(0, Math.min(100, v));
@@ -105,7 +104,7 @@ export function parseCodexUsage(payload) {
         windows.find(w => w.key === 'secondary' && w.label === 'window');
     return {
         status: 'ok', provider: 'codex', plan: payload.plan_type ?? root.plan_type ?? null,
-        windows: weekly ? [{...weekly, label: 'Weekly'}] : [],
+        windows: weekly ? [{...weekly, key: 'weekly', label: 'Weekly'}] : [],
     };
 }
 
@@ -136,322 +135,255 @@ export async function fetchCodex(session, {baseUrl = ''} = {}) {
     }
 }
 
-export function grokHome() {
-    return GLib.getenv('GROK_HOME') || GLib.build_filenamev([GLib.get_home_dir(), '.grok']);
+// ---------------------------------------------------------------- OpenCode Go
+
+export const OPENCODE_GO_ID = 'opencode-go';
+export const OPENCODE_GO_USAGE_URL = 'https://opencode.ai/zen/go/v1/usage';
+
+// OpenCode 2 keeps credentials in its channel databases and imports the legacy
+// auth.json once. Before that migration runs the file is still the source.
+export const OPENCODE_CREDENTIAL_MIGRATION = '20260805200742_import_legacy_credentials';
+const OPENCODE_DATABASES = ['opencode.db', 'opencode-next.db'];
+
+export function opencodeDataDir() {
+    const xdg = GLib.getenv('XDG_DATA_HOME');
+    if (xdg)
+        return GLib.build_filenamev([xdg, 'opencode']);
+    return GLib.build_filenamev([GLib.get_home_dir(), '.local', 'share', 'opencode']);
 }
 
-export function grokAuthPath() {
-    return GLib.build_filenamev([grokHome(), 'auth.json']);
-}
-
-function readGrokVersion() {
-    try {
-        const [ok, bytes] = GLib.file_get_contents(GLib.build_filenamev([grokHome(), 'version.json']));
-        const version = ok ? JSON.parse(decoder.decode(bytes)).version : null;
-        return typeof version === 'string' && version.trim() ? version.trim() : '0.0.0';
-    } catch {
-        return '0.0.0';
-    }
-}
-
-// Newest Grok CLI OIDC session. The extension does not refresh or write it.
-export function readGrokAuth(auth = readAuthFile(grokAuthPath())) {
-    const entries = Object.values(auth).filter(entry =>
-        entry && typeof entry === 'object' && typeof entry.key === 'string' && entry.key.trim());
-    if (!entries.length)
-        return null;
-    entries.sort((a, b) => String(b.expires_at ?? '').localeCompare(String(a.expires_at ?? '')));
-    const entry = entries[0];
-    const expiresAt = Date.parse(entry.expires_at);
-    return {
-        accessToken: entry.key.trim(),
-        expired: Number.isFinite(expiresAt) && expiresAt <= Date.now(),
-        version: readGrokVersion(),
-    };
+export function opencodeAuthPath(dataDir = opencodeDataDir()) {
+    return GLib.build_filenamev([dataDir, 'auth.json']);
 }
 
 function isoSeconds(value) {
+    if (typeof value === 'number')
+        return Number.isFinite(value) ? value : null;
     const ms = Date.parse(value ?? '');
     return Number.isFinite(ms) ? ms / 1000 : null;
 }
 
-function usageWindow(used, resetAt) {
-    if (used === null)
-        return [];
-    return [{key: 'weekly', label: 'Weekly', usedPct: pct(used), resetAt}];
+// The OpenCode CLI is often installed outside the PATH the GNOME session
+// inherited, so the well-known install locations are checked as well.
+export function opencodeBinaries() {
+    const home = GLib.get_home_dir();
+    const candidates = [
+        GLib.find_program_in_path('opencode'),
+        GLib.build_filenamev([home, '.opencode', 'bin', 'opencode']),
+        GLib.build_filenamev([home, '.local', 'bin', 'opencode']),
+        GLib.build_filenamev([home, '.bun', 'bin', 'opencode']),
+        '/usr/local/bin/opencode',
+        '/usr/bin/opencode',
+    ].filter(Boolean);
+    return candidates.filter((path, index) =>
+        GLib.file_test(path, GLib.FileTest.IS_EXECUTABLE) && candidates.indexOf(path) === index);
 }
 
-// creditUsagePercent is the shared weekly pool Grok Build's /usage screen shows.
-// productUsage entries are shares of that pool, not separate allowances.
-export function parseGrokCredits(payload) {
-    const config = payload?.config && typeof payload.config === 'object' ? payload.config : payload ?? {};
-    return {
-        usedPct: numeric(config.creditUsagePercent),
-        resetAt: isoSeconds(config.currentPeriod?.end ?? config.billingPeriodEnd),
-    };
-}
-
-function readVarint(bytes, offset) {
-    let value = 0;
-    let shift = 0;
-    let i = offset;
-    while (i < bytes.length && shift <= 28) {
-        const byte = bytes[i++];
-        value += (byte & 0x7f) * (2 ** shift);
-        if ((byte & 0x80) === 0)
-            return [value, i];
-        shift += 7;
-    }
-    return [null, bytes.length];
-}
-
-function protobufFields(bytes) {
-    const fields = [];
-    let i = 0;
-    while (i < bytes.length) {
-        const [key, next] = readVarint(bytes, i);
-        if (key === null)
-            break;
-        i = next;
-        const id = key >> 3;
-        const wire = key & 7;
-        if (wire === 0) {
-            const [value, after] = readVarint(bytes, i);
-            if (value === null)
-                break;
-            fields.push({id, value});
-            i = after;
-        } else if (wire === 5 && i + 4 <= bytes.length) {
-            const value = new DataView(bytes.buffer, bytes.byteOffset + i, 4).getFloat32(0, true);
-            fields.push({id, value});
-            i += 4;
-        } else if (wire === 1 && i + 8 <= bytes.length) {
-            i += 8;
-        } else if (wire === 2) {
-            const [length, after] = readVarint(bytes, i);
-            if (length === null || after + length > bytes.length)
-                break;
-            fields.push({id, bytes: bytes.slice(after, after + length)});
-            i = after + length;
-        } else {
-            break;
-        }
-    }
-    return fields;
-}
-
-function timestampSeconds(message) {
-    const seconds = protobufFields(message).find(field => field.id === 1 && typeof field.value === 'number');
-    return seconds ? seconds.value : null;
-}
-
-// GetGrokCreditsConfig, the endpoint Grok Build uses when the REST payload
-// omits a zero. Field 1 is the used percent; an active period with no field
-// is 0% used. Field 5 is the period end.
-export function parseGrokCreditsFrame(input) {
-    const bytes = input instanceof Uint8Array ? input : Uint8Array.from(input);
-    let message = bytes;
-    if (bytes.length >= 5 && (bytes[0] === 0 || bytes[0] === 1)) {
-        const length = new DataView(bytes.buffer, bytes.byteOffset, 5).getUint32(1);
-        if (5 + length <= bytes.length)
-            message = bytes.slice(5, 5 + length);
-    }
-    const top = protobufFields(message);
-    const config = top.find(field => field.id === 1 && field.bytes)?.bytes ?? message;
-    const fields = protobufFields(config);
-    const used = fields.find(field => field.id === 1 && typeof field.value === 'number');
-    const resetAt = timestampSeconds(fields.find(field => field.id === 5 && field.bytes)?.bytes ?? new Uint8Array());
-    const start = timestampSeconds(fields.find(field => field.id === 4 && field.bytes)?.bytes ?? new Uint8Array());
-    const now = Date.now() / 1000;
-    const periodActive = start !== null && resetAt !== null && start <= now && resetAt > now;
-    return {
-        usedPct: used ? used.value : (periodActive ? 0 : null),
-        resetAt,
-    };
-}
-
-export function grokBuildResult(credits, plan = null) {
-    if (!credits || credits.usedPct === null) {
-        return {status: 'ok', provider: 'grok-build', plan, windows: [],
-            message: credits?.resetAt ? 'Weekly usage not reported yet' : 'Weekly usage unavailable'};
-    }
-    return {status: 'ok', provider: 'grok-build', plan, windows: usageWindow(credits.usedPct, credits.resetAt)};
-}
-
-function grokHeaders(auth) {
-    return {
-        Authorization: `Bearer ${auth.accessToken}`,
-        Accept: 'application/json',
-        'x-grok-client-version': auth.version,
-        'x-grok-client-surface': 'grok-build',
-        'X-XAI-Token-Auth': 'xai-grok-cli',
-        'User-Agent': `grok/${auth.version}`,
-    };
-}
-
-export async function fetchGrokBuild(session) {
-    const auth = readGrokAuth();
-    if (!auth)
-        return {status: 'noauth', provider: 'grok-build', message: 'No Grok CLI sign-in — run grok login'};
-    if (auth.expired)
-        return {status: 'auth', provider: 'grok-build', message: 'Grok CLI token expired — run grok login'};
-    const base = (GLib.getenv('GROK_CLI_CHAT_PROXY_BASE_URL') || 'https://cli-chat-proxy.grok.com').replace(/\/+$/, '');
-    try {
-        const headers = grokHeaders(auth);
-        const res = await get(session, `${base}/v1/billing?format=credits`, headers);
-        if (res.status === 401 || res.status === 403)
-            return {status: 'auth', provider: 'grok-build', message: `HTTP ${res.status} — run grok login`};
-        if (res.status !== 200)
-            return {status: 'error', provider: 'grok-build', message: `Usage endpoint returned HTTP ${res.status}`};
-        let credits = parseGrokCredits(JSON.parse(res.body));
-        if (credits.usedPct === null) {
-            const frame = await request(session, 'POST',
-                'https://grok.com/grok_api_v2.GrokBuildBilling/GetGrokCreditsConfig',
-                {...headers, 'Content-Type': 'application/grpc-web+proto', 'x-grpc-web': '1',
-                    Origin: 'https://grok.com'},
-                Uint8Array.from([0, 0, 0, 0, 2, 8, 0]), 'application/grpc-web+proto');
-            if (frame.status === 200)
-                credits = {...parseGrokCreditsFrame(frame.raw), resetAt: credits.resetAt ?? parseGrokCreditsFrame(frame.raw).resetAt};
-        }
-        let plan = null;
+// Runs a helper without blocking the GNOME Shell main loop.
+function runProgramAsync(argv, timeoutSec = 10) {
+    return new Promise(resolve => {
+        let proc;
         try {
-            const settings = await get(session, `${base}/v1/settings`, headers);
-            if (settings.status === 200) {
-                const tier = JSON.parse(settings.body).subscription_tier_display;
-                plan = typeof tier === 'string' ? tier : null;
+            proc = Gio.Subprocess.new(argv, Gio.SubprocessFlags.STDOUT_PIPE |
+                Gio.SubprocessFlags.STDERR_SILENCE);
+        } catch {
+            resolve(null);
+            return;
+        }
+        let done = false;
+        let timeoutId = 0;
+        const finish = value => {
+            if (done)
+                return;
+            done = true;
+            if (timeoutId)
+                GLib.source_remove(timeoutId);
+            resolve(value);
+        };
+        timeoutId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, timeoutSec, () => {
+            try {
+                proc.force_exit();
+            } catch {
+                /* the process is already gone */
             }
-        } catch {
-            plan = null;
-        }
-        return grokBuildResult(credits, plan);
-    } catch (e) {
-        return {status: 'error', provider: 'grok-build', message: `Usage request failed: ${e.message}`};
-    }
+            finish(null);
+            return GLib.SOURCE_REMOVE;
+        });
+        proc.communicate_utf8_async(null, null, (p, res) => {
+            try {
+                const [ok, stdout] = p.communicate_utf8_finish(res);
+                finish(ok ? stdout : null);
+            } catch {
+                finish(null);
+            }
+        });
+    });
 }
 
-function grokBotSecretsPath() {
-    return GLib.build_filenamev([GLib.get_user_config_dir(), 'Grok Bot', 'sand-secrets.json']);
-}
-
-function hex(bytes) {
-    return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
-}
-
-function openssl(args) {
-    const bin = GLib.find_program_in_path('openssl') || '/usr/bin/openssl';
-    const [ok, stdout, stderr, status] = GLib.spawn_sync(null, [bin, ...args], null,
-        GLib.SpawnFlags.SEARCH_PATH, null);
-    if (!ok || !GLib.spawn_check_exit_status(status))
-        throw new Error(decoder.decode(stderr).trim() || 'openssl failed');
-    return stdout;
-}
-
-// Chromium v11 safeStorage: PBKDF2-HMAC-SHA1("saltysalt", 1) and AES-128-CBC.
-function decryptSafeStorage(password, blob) {
-    const prefix = decoder.decode(blob.slice(0, 3));
-    const secret = prefix === 'v10' ? 'peanuts' : password;
-    if (prefix !== 'v10' && prefix !== 'v11')
-        return null;
-    if (!secret)
-        return null;
-    const key = openssl(['kdf', '-keylen', '16', '-binary', '-kdfopt', 'digest:SHA1',
-        '-kdfopt', `hexpass:${hex(new TextEncoder().encode(secret))}`,
-        '-kdfopt', `hexsalt:${hex(new TextEncoder().encode('saltysalt'))}`,
-        '-kdfopt', 'iter:1', 'PBKDF2']);
-    const tmp = GLib.build_filenamev([GLib.get_tmp_dir(), `openusage-${GLib.random_int()}`]);
+// `opencode auth export` prints the stored credentials, secrets included, as
+// JSON. Only the opencode-go entry is read and nothing else is logged.
+export function parseOpencodeExport(text) {
+    let data;
     try {
-        Gio.File.new_for_path(tmp).replace_contents(blob.slice(3), null, false, Gio.FileCreateFlags.PRIVATE, null);
-        const plain = openssl(['enc', '-aes-128-cbc', '-d', '-nopad', '-K', hex(key),
-            '-iv', '20'.repeat(16), '-in', tmp]);
-        const pad = plain[plain.length - 1];
-        const unpadded = pad >= 1 && pad <= 16 ? plain.slice(0, plain.length - pad) : plain;
-        const text = decoder.decode(unpadded);
-        return text.startsWith('eyJ') ? text : null;
-    } finally {
-        GLib.unlink(tmp);
+        data = JSON.parse(text);
+    } catch {
+        return null;
+    }
+    const entries = Array.isArray(data) ? data : (data && typeof data === 'object' ? [data] : []);
+    for (const entry of entries) {
+        if (!entry || typeof entry !== 'object')
+            continue;
+        const id = entry.integrationID ?? entry.integration_id ?? entry.providerID ?? entry.provider;
+        if (id !== OPENCODE_GO_ID)
+            continue;
+        const value = entry.value ?? entry.credential ?? entry;
+        const key = typeof value === 'string' ? value : value?.key;
+        if (typeof key === 'string' && key.trim())
+            return key.trim();
+    }
+    return null;
+}
+
+export async function readOpencodeGoKeyFromCli() {
+    for (const bin of opencodeBinaries()) {
+        const out = await runProgramAsync([bin, 'auth', 'export', OPENCODE_GO_ID]);
+        if (out === null)
+            continue;
+        const key = parseOpencodeExport(out);
+        if (key)
+            return key;
+    }
+    return null;
+}
+
+// The legacy file OpenCode 1 kept its API keys in.
+export function readOpencodeGoKeyFromAuthFile(path = opencodeAuthPath()) {
+    const entry = readAuthFile(path)[OPENCODE_GO_ID];
+    const key = typeof entry === 'string' ? entry : entry?.key;
+    return typeof key === 'string' && key.trim() ? key.trim() : null;
+}
+
+// OpenCode 2 stores the key in the credential table of its channel database.
+async function readOpencodeCredentialState(path) {
+    const python = GLib.find_program_in_path('python3');
+    if (!python)
+        return null;
+    const script = [
+        'import json, sqlite3, sys',
+        'try:',
+        '    db = sqlite3.connect("file:" + sys.argv[1] + "?mode=ro", uri=True)',
+        '    migrated = db.execute(',
+        '        "SELECT 1 FROM migration WHERE id = ? LIMIT 1", (sys.argv[2],)).fetchone() is not None',
+        '    row = db.execute(',
+        '        "SELECT value FROM credential WHERE integration_id = ? AND (active IS NULL OR active = 1)"',
+        '        " ORDER BY active DESC, time_updated DESC, id DESC LIMIT 1", (sys.argv[3],)).fetchone()',
+        '    print(json.dumps({"migrated": migrated, "value": row[0] if row else None}))',
+        'except Exception:',
+        '    print(json.dumps({"error": True}))',
+    ].join('\n');
+    const out = await runProgramAsync([python, '-c', script, path,
+        OPENCODE_CREDENTIAL_MIGRATION, OPENCODE_GO_ID]);
+    if (out === null)
+        return null;
+    try {
+        const state = JSON.parse(out);
+        return state && !state.error ? state : null;
+    } catch {
+        return null;
     }
 }
 
-export function readGrokBotToken(secrets = readAuthFile(grokBotSecretsPath()), password = null) {
-    let accounts = secrets['cursor-accounts'];
-    if (typeof accounts === 'string') {
+// Returns the key plus whether a database owns the credential. A database that
+// owns it and holds no key means the user logged out, so the legacy file must
+// not resurrect the stale import.
+export async function readOpencodeGoKeyFromDatabase(dataDir = opencodeDataDir()) {
+    let authoritative = false;
+    for (const name of OPENCODE_DATABASES) {
+        const path = GLib.build_filenamev([dataDir, name]);
+        if (!GLib.file_test(path, GLib.FileTest.EXISTS))
+            continue;
+        const state = await readOpencodeCredentialState(path);
+        if (!state || !state.migrated)
+            continue;
+        authoritative = true;
+        let value = null;
         try {
-            accounts = JSON.parse(accounts);
+            value = state.value ? JSON.parse(state.value) : null;
         } catch {
-            return null;
+            value = null;
         }
+        const key = typeof value === 'string' ? value : value?.key;
+        if (typeof key === 'string' && key.trim())
+            return {key: key.trim(), authoritative: true};
     }
-    const active = accounts?.accounts?.[accounts?.active];
-    const stored = active?.['cursor-access-token'];
-    if (typeof stored !== 'string' || !stored.trim())
-        return null;
-    if (stored.startsWith('eyJ'))
-        return {accessToken: stored, expired: false};
-    let blob;
-    try {
-        blob = GLib.base64_decode(stored);
-    } catch {
-        return null;
-    }
-    const accessToken = decryptSafeStorage(password, blob);
-    if (!accessToken)
-        return null;
-    let expired = false;
-    try {
-        const part = accessToken.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
-        const claims = JSON.parse(decoder.decode(GLib.base64_decode(part + '='.repeat((4 - part.length % 4) % 4))));
-        expired = typeof claims.exp === 'number' && claims.exp * 1000 <= Date.now();
-    } catch {
-        expired = false;
-    }
-    return {accessToken, expired};
+    return {key: null, authoritative};
 }
 
-function lookupGrokBotPassword() {
-    const schema = new Secret.Schema('chrome_libsecret_os_crypt_password_v2',
-        Secret.SchemaFlags.NONE, {application: Secret.SchemaAttributeType.STRING});
-    return Secret.password_lookup_sync(schema, {application: 'Grok Bot'}, null);
+export async function readOpencodeGoKey() {
+    const cli = await readOpencodeGoKeyFromCli();
+    if (cli)
+        return cli;
+    const db = await readOpencodeGoKeyFromDatabase();
+    if (db.key)
+        return db.key;
+    if (!db.authoritative)
+        return readOpencodeGoKeyFromAuthFile();
+    return null;
 }
 
-export function parseGrokBotUsage(payload) {
-    if (payload?.hasNonZeroIncludedLimit === false) {
-        return {status: 'ok', provider: 'grok-bot', plan: payload.grokPlanLabel ?? null, windows: [],
-            message: 'No included Grok Bot allowance'};
+// The Go usage endpoint reports three windows: the rolling 5-hour session, the
+// weekly window and the monthly window. Every percent is the share of that
+// window's allowance already spent.
+export function parseOpencodeGoUsage(payload) {
+    const usage = payload?.usage;
+    if (!usage || typeof usage !== 'object')
+        return null;
+    const windows = [];
+    for (const [key, label] of [['rolling', '5-hour'], ['weekly', 'Weekly'], ['monthly', 'Monthly']]) {
+        const window = usage[key];
+        if (!window || typeof window !== 'object')
+            continue;
+        const used = numeric(window.percent);
+        if (used === null)
+            continue;
+        windows.push({key, label, usedPct: pct(used), resetAt: isoSeconds(window.resetsAt)});
     }
-    const used = numeric(payload?.usagePercent);
-    return {
-        status: 'ok', provider: 'grok-bot', plan: typeof payload?.grokPlanLabel === 'string' ? payload.grokPlanLabel : null,
-        windows: usageWindow(used, isoSeconds(payload?.nextResetTimestampUtc)),
-        message: used === null ? 'Weekly usage unavailable' : null,
-    };
+    return windows;
 }
 
-export async function fetchGrokBot(session) {
-    const secrets = readAuthFile(grokBotSecretsPath());
-    if (!secrets['cursor-accounts'])
-        return {status: 'noauth', provider: 'grok-bot', message: 'No Grok Bot sign-in'};
-    let auth;
+export async function fetchOpencodeGo(session) {
+    let key;
     try {
-        auth = readGrokBotToken(secrets, lookupGrokBotPassword());
+        key = await readOpencodeGoKey();
     } catch (e) {
-        return {status: 'error', provider: 'grok-bot', message: `Could not read the Grok Bot session: ${e.message}`};
+        return {status: 'error', provider: 'opencode-go',
+            message: `Could not read the OpenCode Go key: ${e.message}`};
     }
-    if (!auth)
-        return {status: 'error', provider: 'grok-bot', message: 'Could not read the Grok Bot session'};
-    if (auth.expired)
-        return {status: 'auth', provider: 'grok-bot', message: 'Grok Bot session expired — sign in again'};
+    if (!key)
+        return {status: 'noauth', provider: 'opencode-go',
+            message: 'No OpenCode Go sign-in — run /connect in OpenCode and pick OpenCode Go'};
     try {
-        const res = await request(session, 'POST',
-            'https://api2.cursor.sh/aiserver.v1.DashboardService/GetSandUsageStatus',
-            {Authorization: `Bearer ${auth.accessToken}`, 'Content-Type': 'application/json',
-                'Connect-Protocol-Version': '1', Accept: 'application/json'},
-            new TextEncoder().encode('{}'), 'application/json');
-        if (res.status === 401 || res.status === 403)
-            return {status: 'auth', provider: 'grok-bot', message: `HTTP ${res.status} — sign in to Grok Bot again`};
+        const res = await get(session, OPENCODE_GO_USAGE_URL, {
+            Authorization: `Bearer ${key}`,
+            Accept: 'application/json',
+            'User-Agent': 'openusage-gnome/1.0',
+        });
+        if (res.status === 401)
+            return {status: 'auth', provider: 'opencode-go',
+                message: 'OpenCode Go key rejected — sign in again with /connect'};
+        if (res.status === 403)
+            return {status: 'auth', provider: 'opencode-go',
+                message: 'No OpenCode Go subscription on this key'};
         if (res.status !== 200)
-            return {status: 'error', provider: 'grok-bot', message: `Usage endpoint returned HTTP ${res.status}`};
-        return parseGrokBotUsage(JSON.parse(res.body));
+            return {status: 'error', provider: 'opencode-go',
+                message: `Usage endpoint returned HTTP ${res.status}`};
+        const windows = parseOpencodeGoUsage(JSON.parse(res.body));
+        if (!windows || !windows.length)
+            return {status: 'error', provider: 'opencode-go',
+                message: 'Usage response did not report any window'};
+        return {status: 'ok', provider: 'opencode-go', plan: null, windows};
     } catch (e) {
-        return {status: 'error', provider: 'grok-bot', message: `Usage request failed: ${e.message}`};
+        return {status: 'error', provider: 'opencode-go',
+            message: `Usage request failed: ${e.message}`};
     }
 }

@@ -31,24 +31,4 @@ try {
     GLib.unlink(path);
     GLib.rmdir(dir);
 }
-const grokDir = GLib.dir_make_tmp('openusage-grok-XXXXXX');
-const grokAuth = GLib.build_filenamev([grokDir, 'auth.json']);
-try {
-    GLib.file_set_contents(grokAuth, JSON.stringify({
-        old: {key: 'old-token', expires_at: '2020-01-01T00:00:00Z'},
-        current: {key: 'current-token', expires_at: '2099-01-01T00:00:00Z'},
-    }));
-    const oldHome = GLib.getenv('GROK_HOME');
-    GLib.setenv('GROK_HOME', grokDir, true);
-    const grok = P.readGrokAuth();
-    check(grok.accessToken === 'current-token' && !grok.expired, 'uses the newest Grok CLI session');
-    GLib.file_set_contents(grokAuth, JSON.stringify({expired: {key: 'expired-token', expires_at: '2020-01-01T00:00:00Z'}}));
-    check(P.readGrokAuth().expired, 'detects an expired Grok CLI session');
-    check(P.readGrokAuth({api_key: 'test'}) === null, 'ignores a Grok API key');
-    if (oldHome === null) GLib.unsetenv('GROK_HOME');
-    else GLib.setenv('GROK_HOME', oldHome, true);
-} finally {
-    GLib.unlink(grokAuth);
-    GLib.rmdir(grokDir);
-}
 print('ALL PASSED');
